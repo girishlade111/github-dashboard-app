@@ -56,7 +56,7 @@ export default async function RepositoriesPage() {
     sql`select github_id, name, full_name, description, private, fork, archived,
       is_template, stars, forks, open_issues, language, topics, license, homepage, pushed_at
       from repos order by pushed_at desc nulls last`,
-    sql`select repo_id, language, pct from repo_languages order by pct desc`,
+    sql`select repo_id, language, pct::float8 as pct from repo_languages order by pct desc`,
     sql`select distinct on (repo_id) repo_id, tag_name, html_url from repo_releases
       order by repo_id, published_at desc nulls last`,
     sql`select repo_id, package_type, name, version from packages order by repo_id, name`,
