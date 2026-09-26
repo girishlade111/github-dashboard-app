@@ -109,6 +109,7 @@ export async function ghGraphQL<T>(token: string, query: string, variables: Reco
   });
   if (res.status === 401) throw new GitHubAuthError();
   checkRateLimit(res);
+  if (!res.ok) throw new Error(`GitHub GraphQL request failed: ${res.status}`);
   const body = (await res.json()) as GraphQLResponse<T>;
   if (body.errors && body.errors.length > 0) {
     const rateLimited = body.errors.some((e) => e.type === "RATE_LIMITED");
@@ -118,7 +119,11 @@ export async function ghGraphQL<T>(token: string, query: string, variables: Reco
     throw new Error("GitHub GraphQL error: " + body.errors.map((e) => e.message).join("; "));
   }
   if (!body.data) throw new Error("GitHub GraphQL returned no data");
-  return { data: body.data, rateLimit: null };
+  // Surface embedded rate-limit info when the query selects it (e.g. REPOS_QUERY).
+  let rateLimit: RateLimitInfo | null = null;
+  const embedded = (body.data as unknown as { rateLimit?: RateLimitInfo }).rateLimit;
+  if (embedded && typeof embedded.remaining === "number") rateLimit = embedded;
+  return { data: body.data, rateLimit };
 }
 
 /* ------------------------------------------------------------------ */
@@ -241,11 +246,11 @@ function mapRepoNode(n: ReposQueryNode): GitHubRepo {
 }
 
 export async function listReposPage(token: string, cursor?: string | null): Promise<ReposPage> {
-  const { data } = await ghGraphQL<ReposQueryData>(token, REPOS_QUERY, { cursor: cursor ?? null });
+  const { data, rateLimit } = await ghGraphQL<ReposQueryData>(token, REPOS_QUERY, { cursor: cursor ?? null });
   return {
     repos: data.viewer.repositories.nodes.map(mapRepoNode),
     pageInfo: data.viewer.repositories.pageInfo,
-    rateLimit: {
+    rateLimit: rateLimit ?? {
       limit: data.rateLimit.limit,
       remaining: data.rateLimit.remaining,
       resetAt: data.rateLimit.resetAt,

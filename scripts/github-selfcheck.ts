@@ -1,5 +1,7 @@
 /**
- * Self-check for lib/github.ts. Run: GITHUB_TOKEN=ghp_xxx npx tsx scripts/github-selfcheck.ts
+ * Self-check for lib/github.ts. Run:
+ *   GITHUB_TOKEN=ghp_xxx npx tsx --conditions=react-server scripts/github-selfcheck.ts
+ * (the react-server condition satisfies the `server-only` guard in lib/github.ts)
  * Skips silently when GITHUB_TOKEN is unset. Never commit a token.
  */
 import { getPackages, getProfileAndContributions, listReposPage } from "../lib/github";
