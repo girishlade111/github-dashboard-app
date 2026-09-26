@@ -150,7 +150,6 @@ const REPOS_QUERY = `
           defaultBranchRef { name }
           createdAt updatedAt pushedAt
           diskUsage
-          hasPagesEnabled
           releases(first: 1, orderBy: {field: CREATED_AT, direction: DESC}) {
             nodes { tagName name publishedAt isPrerelease url }
           }
@@ -183,7 +182,6 @@ interface ReposQueryNode {
   updatedAt: string;
   pushedAt: string | null;
   diskUsage: number;
-  hasPagesEnabled: boolean;
   releases: {
     nodes: {
       tagName: string | null;
@@ -232,7 +230,6 @@ function mapRepoNode(n: ReposQueryNode): GitHubRepo {
     updatedAt: n.updatedAt,
     pushedAt: n.pushedAt,
     diskUsageKb: n.diskUsage,
-    hasPagesEnabled: n.hasPagesEnabled,
     latestRelease: rel
       ? {
           tagName: rel.tagName,
@@ -417,7 +414,9 @@ export function toRepoRow(g: GitHubRepo): RepoRow {
     updated_at: g.updatedAt,
     pushed_at: g.pushedAt,
     size_kb: g.diskUsageKb,
-    has_pages: g.hasPagesEnabled,
+    // GitHub GraphQL exposes no pages-enabled flag on Repository; Pages are
+    // detected per-repo via the REST API in syncPagesPhase instead.
+    has_pages: false,
     synced_at: null,
   };
 }

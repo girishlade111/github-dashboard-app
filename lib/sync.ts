@@ -96,8 +96,7 @@ async function syncPackagesPhase(token: string): Promise<{ finished: boolean; co
 async function syncPagesPhase(token: string): Promise<{ finished: boolean; count: number }> {
   const rows = (await sql`
     select r.github_id, r.full_name from repos r
-    where r.has_pages = true
-      and not exists (select 1 from pages p where p.repo_id = r.github_id)
+    where not exists (select 1 from pages p where p.repo_id = r.github_id)
     order by r.pushed_at desc nulls last
     limit ${PAGES_BATCH}
   `) as RepoIdRow[];

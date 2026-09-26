@@ -118,7 +118,6 @@ export interface GitHubRepo {
   updatedAt: string;
   pushedAt: string | null;
   diskUsageKb: number;
-  hasPagesEnabled: boolean;
   latestRelease: GitHubRelease | null;
 }
 
