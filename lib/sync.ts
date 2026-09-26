@@ -169,21 +169,37 @@ export async function runSyncChunk(opts: { token: string; maxPages?: number }): 
   const { token, maxPages = 4 } = opts;
   let reposUpserted = 0;
 
-  // Cache the token for the session-less cron (server-side DB only, never logged).
-  try {
-    if ((await getSyncState("github_token")) !== token) {
-      await setSyncState("github_token", token);
-    }
-  } catch {
-    // non-fatal; cron will simply report that a manual sync is needed
-  }
-
   const fail = async (status: SyncReport["status"], message?: string, phase = ""): Promise<SyncReport> => {
     await setSyncState("status", status);
     return { phase, reposUpserted, done: false, status, message };
   };
 
   try {
+    // FIX 01 — make sync resumable: a terminal "done" phase must start a fresh
+    // run instead of no-op. Only progress/cursor state is reset; synced data
+    // tables (repos, languages, releases, etc.) are left untouched — writes
+    // below are idempotent upserts.
+    if ((await getSyncState("sync_phase")) === "done") {
+      await setSyncState("sync_phase", "repos");
+      await setSyncState("repos_cursor", "");
+      for (const type of PACKAGE_TYPES) {
+        await setSyncState(`pkg_${type}_done`, "");
+        await setSyncState(`pkg_${type}_page`, "1");
+      }
+      // No pages cursor key exists today (pages phase is driven by a
+      // `not exists` query), but clear it defensively if one is ever added.
+      await setSyncState("pages_cursor", "");
+    }
+
+    // Cache the token for the session-less cron (server-side DB only, never logged).
+    try {
+      if ((await getSyncState("github_token")) !== token) {
+        await setSyncState("github_token", token);
+      }
+    } catch {
+      // non-fatal; cron will simply report that a manual sync is needed
+    }
+
     const phase = (await getSyncState("sync_phase")) ?? "repos";
 
     /* ---- repos ---- */
