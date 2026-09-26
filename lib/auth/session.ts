@@ -48,6 +48,9 @@ export async function getGitHubToken(): Promise<string | null> {
         "Content-Type": "application/json",
         Cookie: c.toString(),
         Origin: origin,
+        // Forward the Neon server-proxy marker when present (mirrors the
+        // SDK's own server-side calls); never logged.
+        ...(h.get("x-neon-auth-proxy") ? { "x-neon-auth-proxy": h.get("x-neon-auth-proxy") as string } : {}),
       },
       body: JSON.stringify({ providerId: "github" }),
       cache: "no-store",
