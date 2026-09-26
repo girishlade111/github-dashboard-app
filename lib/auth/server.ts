@@ -10,7 +10,7 @@ function getInstance(): NeonAuth {
     const secret = process.env.NEON_AUTH_COOKIE_SECRET;
     if (!baseUrl) throw new Error("NEON_AUTH_BASE_URL is not set — configure it in .env.local or the environment.");
     if (!secret) throw new Error("NEON_AUTH_COOKIE_SECRET is not set — configure it in .env.local or the environment.");
-    instance = createNeonAuth({ baseUrl, cookies: { secret } });
+    instance = createNeonAuth({ baseUrl, cookies: { secret }, logLevel: "debug" });
   }
   return instance;
 }
