@@ -1,5 +1,7 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import Heatmap from "@/components/Heatmap";
+import GitHubConnectStatus from "@/components/GitHubConnectStatus";
 import ProfileHeader from "@/components/ProfileHeader";
 import RecentlyPushed, { type PushedRepo } from "@/components/RecentlyPushed";
 import StatCard from "@/components/StatCard";
@@ -56,6 +58,9 @@ export default async function OverviewPage() {
   if (!profile) {
     return (
       <section className="py-24">
+        <Suspense>
+          <GitHubConnectStatus />
+        </Suspense>
         {status === "auth_failed" && (
           <div className="mb-8">
             <Banner tone="amber">
@@ -99,6 +104,9 @@ export default async function OverviewPage() {
 
   return (
     <div className="pb-16">
+      <Suspense>
+        <GitHubConnectStatus />
+      </Suspense>
       {status === "auth_failed" && (
         <div className="mt-8">
           <Banner tone="amber">

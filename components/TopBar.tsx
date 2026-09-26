@@ -42,10 +42,11 @@ const NAV = [
 interface TopBarProps {
   syncLabel?: string;
   onSyncNow?: () => void;
+  showConnect?: boolean;
   avatarUrl?: string;
 }
 
-export default function TopBar({ syncLabel, onSyncNow, avatarUrl }: TopBarProps) {
+export default function TopBar({ syncLabel, onSyncNow, showConnect = false, avatarUrl }: TopBarProps) {
   const pathname = usePathname();
   const { data: session } = authClient.useSession();
   const avatar = session?.user?.image ?? avatarUrl ?? null;
@@ -107,6 +108,16 @@ export default function TopBar({ syncLabel, onSyncNow, avatarUrl }: TopBarProps)
               </span>
               Sync now
             </Button>
+          )}
+
+          {showConnect && (
+            <a
+              href="/api/github/connect"
+              aria-label="Connect GitHub full access"
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-hairline bg-canvas px-5 text-sm font-medium leading-none text-ink transition-colors hover:border-muted-soft"
+            >
+              Connect GitHub full access
+            </a>
           )}
 
           {/* Avatar + sign out */}

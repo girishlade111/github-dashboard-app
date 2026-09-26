@@ -29,6 +29,7 @@ export default function TopBarClient({ syncLabel }: { syncLabel?: string }) {
     <TopBar
       syncLabel={bare ? undefined : syncLabel}
       onSyncNow={bare ? undefined : handleSyncNow}
+      showConnect={!bare}
     />
   );
 }

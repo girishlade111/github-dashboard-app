@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { headers, cookies } from "next/headers";
 import { auth } from "./server";
 import { isAllowed } from "./allowlist";
-import { getSyncState } from "../db";
+import { getSyncState, setSyncState } from "../db";
 
 /**
  * SERVER-ONLY helpers. Never import this file (or getGitHubToken) from a
@@ -24,6 +24,15 @@ export interface SessionUser {
  * used here. Returns null when missing/expired (caller shows reconnect banner).
  */
 export async function getGitHubToken(): Promise<string | null> {
+  // (a) Full-access token from our own GitHub OAuth App (private repos +
+  // packages). Never logged; server-side only.
+  try {
+    const wide = await getWideSyncToken();
+    if (wide) return wide;
+  } catch {
+    // DB unavailable — fall through to the session token below.
+  }
+
   /* Neon Auth SDK declares get-access-token as GET (404s upstream) and
      listAccounts() strips tokens by design, so we call better-auth's native
      POST /get-access-token directly, server-side only. */
@@ -46,7 +55,14 @@ export async function getGitHubToken(): Promise<string | null> {
     if (!res.ok) return null;
     const data = (await res.json()) as { accessToken?: unknown };
     const token = data?.accessToken;
-    return typeof token === "string" && token.length > 0 ? token : null;
+    if (typeof token === "string" && token.length > 0) return token;
+  } catch {
+    // fall through to the legacy cached token below
+  }
+
+  // (c) Legacy session-less cache (narrow Neon scopes). Last resort.
+  try {
+    return await getSyncState("github_token");
   } catch {
     return null;
   }
@@ -96,10 +112,86 @@ export async function requireUser(): Promise<SessionUser> {
 }
 
 /**
- * Session-less token lookup for the cron job. The token is cached in
- * `sync_state` by runSyncChunk whenever an interactive (signed-in) sync runs,
- * so the daily cron can sync without a browser session. Server-side only.
+ * Session-less token lookup for the cron job. Prefers the full-access token
+ * from our own GitHub OAuth App, then the legacy narrow cache. Server-side only.
  */
 export async function getServiceGitHubToken(): Promise<string | null> {
+  try {
+    const wide = await getWideSyncToken();
+    if (wide) return wide;
+  } catch {
+    // fall through to the legacy cache below
+  }
   return getSyncState("github_token");
+}
+
+/* ------------------------------------------------------------------ */
+/* Full-access sync token (own GitHub OAuth App)                       */
+/* ------------------------------------------------------------------ */
+
+const WIDE_TOKEN_KEY = "github_sync_token";
+const WIDE_REFRESH_KEY = "github_sync_refresh_token";
+const WIDE_EXPIRY_KEY = "github_sync_token_expires_at";
+
+interface GitHubRefreshResponse {
+  access_token?: unknown;
+  refresh_token?: unknown;
+  expires_in?: unknown;
+}
+
+/** Refresh an expired wide token using the stored refresh token. Never logs tokens. */
+async function refreshWideToken(refreshToken: string): Promise<boolean> {
+  try {
+    const clientId = process.env.GITHUB_SYNC_CLIENT_ID;
+    const clientSecret = process.env.GITHUB_SYNC_CLIENT_SECRET;
+    if (!clientId || !clientSecret) return false;
+    const res = await fetch("https://github.com/login/oauth/access_token", {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+        client_id: clientId,
+        client_secret: clientSecret,
+      }),
+      cache: "no-store",
+    });
+    if (!res.ok) return false;
+    const body = (await res.json()) as GitHubRefreshResponse;
+    if (typeof body.access_token !== "string" || body.access_token.length === 0) return false;
+    await setSyncState(WIDE_TOKEN_KEY, body.access_token);
+    if (typeof body.refresh_token === "string" && body.refresh_token.length > 0) {
+      await setSyncState(WIDE_REFRESH_KEY, body.refresh_token);
+    }
+    if (typeof body.expires_in === "number") {
+      await setSyncState(
+        WIDE_EXPIRY_KEY,
+        new Date(Date.now() + body.expires_in * 1000).toISOString()
+      );
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Full-access sync token when the user connected our own GitHub OAuth App.
+ * Refreshes first when past the stored expiry and a refresh token exists.
+ */
+async function getWideSyncToken(): Promise<string | null> {
+  const token = await getSyncState(WIDE_TOKEN_KEY);
+  if (!token) return null;
+  const expiresAt = await getSyncState(WIDE_EXPIRY_KEY);
+  if (expiresAt) {
+    const exp = Date.parse(expiresAt);
+    if (!Number.isNaN(exp) && exp <= Date.now()) {
+      const refresh = await getSyncState(WIDE_REFRESH_KEY);
+      if (refresh && (await refreshWideToken(refresh))) {
+        return getSyncState(WIDE_TOKEN_KEY);
+      }
+      return null; // expired with no usable refresh — try other sources
+    }
+  }
+  return token;
 }
