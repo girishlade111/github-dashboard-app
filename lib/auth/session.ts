@@ -1,6 +1,7 @@
 import "server-only";
 
 import { redirect } from "next/navigation";
+import { headers, cookies } from "next/headers";
 import { auth } from "./server";
 import { isAllowed } from "./allowlist";
 import { getSyncState } from "../db";
@@ -23,15 +24,32 @@ export interface SessionUser {
  * used here. Returns null when missing/expired (caller shows reconnect banner).
  */
 export async function getGitHubToken(): Promise<string | null> {
-  /* NOTE: Neon's server proxy declares get-access-token as GET, so providerId
-     must travel as a query param. The inherited better-auth client type
-     describes the POST body shape instead, hence the assertion below. */
-  const getAccessToken = auth.getAccessToken as unknown as (args: {
-    query: { providerId: string };
-  }) => Promise<{ data: { accessToken?: unknown } | null }>;
-  const { data } = await getAccessToken({ query: { providerId: "github" } });
-  const token = data?.accessToken;
-  return typeof token === "string" && token.length > 0 ? token : null;
+  /* Neon Auth SDK declares get-access-token as GET (404s upstream) and
+     listAccounts() strips tokens by design, so we call better-auth's native
+     POST /get-access-token directly, server-side only. */
+  try {
+    const h = await headers();
+    const c = await cookies();
+    const origin = h.get("origin") ?? `http://${h.get("host") ?? "localhost:3000"}`;
+    const baseUrl = process.env.NEON_AUTH_BASE_URL;
+    if (!baseUrl) return null;
+    const res = await fetch(`${baseUrl.replace(/\/$/, "")}/get-access-token`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: c.toString(),
+        Origin: origin,
+      },
+      body: JSON.stringify({ providerId: "github" }),
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { accessToken?: unknown };
+    const token = data?.accessToken;
+    return typeof token === "string" && token.length > 0 ? token : null;
+  } catch {
+    return null;
+  }
 }
 
 /* Short-lived in-memory cache: token -> GitHub login (5 min). */
