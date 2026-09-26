@@ -29,7 +29,11 @@ export default function LoginPage() {
   async function handleSignIn() {
     setBusy(true);
     try {
-      await authClient.signIn.social({ provider: "github", callbackURL: "/" });
+      await authClient.signIn.social({
+        provider: "github",
+        callbackURL: "/",
+        scopes: ["repo", "read:packages"],
+      });
     } finally {
       setBusy(false);
     }
