@@ -259,6 +259,7 @@ export async function runSyncChunk(opts: { token: string; maxPages?: number }): 
       return fail("rate_limited", err.resetAt ? `Rate limited — resumes after ${err.resetAt.toISOString()}.` : "Rate limited.");
     }
     const message = err instanceof Error ? err.message : "Unknown sync error";
+    console.error("[sync] chunk failed:", message);
     return fail("error", message);
   }
 }
