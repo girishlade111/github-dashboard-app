@@ -5,9 +5,11 @@ import {
   setSyncState,
   sql,
   upsertContributions,
-  upsertLanguages,
+  upsertLanguagesBatch,
+  upsertPagesBatch,
   upsertProfile,
-  upsertRepo,
+  upsertReleases,
+  upsertRepos,
 } from "./db";
 import {
   GitHubAuthError,
@@ -20,7 +22,7 @@ import {
   type GitHubPackage,
   type PackageType,
 } from "./github";
-import type { ProfileRow } from "./types";
+import type { PagesRow, ProfileRow, ReleaseRow } from "./types";
 
 export interface SyncReport {
   phase: string;
@@ -32,7 +34,26 @@ export interface SyncReport {
 
 const PACKAGE_TYPES: PackageType[] = ["npm", "container", "maven", "rubygems", "nuget"];
 const PAGES_BATCH = 50;
+const PAGES_CONCURRENCY = 5;
 const PACKAGE_PAGES_PER_CHUNK = 2;
+
+/** Run fn over items with at most `limit` promises in flight (no deps). */
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const i = next++;
+      if (i >= items.length) return;
+      out[i] = await fn(items[i], i);
+    }
+  };
+  const count = Math.min(limit, items.length);
+  const workers: Promise<void>[] = [];
+  for (let w = 0; w < count; w++) workers.push(worker());
+  await Promise.all(workers);
+  return out;
+}
 
 interface RepoIdRow {
   github_id: number;
@@ -100,20 +121,20 @@ async function syncPagesPhase(token: string): Promise<{ finished: boolean; count
     order by r.pushed_at desc nulls last
     limit ${PAGES_BATCH}
   `) as RepoIdRow[];
-  let count = 0;
-  for (const row of rows) {
+  // REST calls run with bounded concurrency (rate-limit safety); the DB
+  // write is a single batched upsert.
+  const infos = await mapLimit(rows, PAGES_CONCURRENCY, (row) => {
     const [owner, ...rest] = row.full_name.split("/");
-    const repo = rest.join("/");
-    const info = await getPagesInfo(token, owner, repo);
-    await sql`
-      insert into pages (repo_id, html_url, status, custom_domain)
-      values (${row.github_id}, ${info?.html_url ?? null}, ${info?.status ?? null}, ${info?.cname ?? null})
-      on conflict (repo_id) do update set
-        html_url = excluded.html_url, status = excluded.status,
-        custom_domain = excluded.custom_domain`;
-    count++;
-  }
-  return { finished: rows.length < PAGES_BATCH, count };
+    return getPagesInfo(token, owner, rest.join("/"));
+  });
+  const pageRows: PagesRow[] = rows.map((row, i) => ({
+    repo_id: row.github_id,
+    html_url: infos[i]?.html_url ?? null,
+    status: infos[i]?.status ?? null,
+    custom_domain: infos[i]?.cname ?? null,
+  }));
+  await upsertPagesBatch(pageRows);
+  return { finished: rows.length < PAGES_BATCH, count: rows.length };
 }
 
 /* ------------------------------------------------------------------ */
@@ -166,7 +187,9 @@ async function syncProfilePhase(token: string): Promise<void> {
 /* ------------------------------------------------------------------ */
 
 export async function runSyncChunk(opts: { token: string; maxPages?: number }): Promise<SyncReport> {
-  const { token, maxPages = 4 } = opts;
+  // One GraphQL repos page holds 100 repos; one chunk stays ≈100 repos so it
+  // fits the 60s limit — resume via repos_cursor.
+  const { token, maxPages = 1 } = opts;
   let reposUpserted = 0;
 
   const fail = async (status: SyncReport["status"], message?: string, phase = ""): Promise<SyncReport> => {
@@ -207,22 +230,33 @@ export async function runSyncChunk(opts: { token: string; maxPages?: number }): 
       let cursor = await getSyncState("repos_cursor");
       let pagesDone = 0;
       for (;;) {
+        // Sequential repo REST calls (rate-limit safety); all DB writes for
+        // the page are batched: 1 repos upsert + 1 languages delete + 1
+        // languages insert + 1 releases upsert.
         const page = await listReposPage(token, cursor);
+        await upsertRepos(page.repos.map(toRepoRow));
+        await upsertLanguagesBatch(
+          page.repos.map((g) => ({
+            repoId: g.databaseId,
+            langs: g.languages.map((l) => ({ language: l.name, bytes: l.size, pct: l.pct })),
+          }))
+        );
+        const releases: ReleaseRow[] = [];
         for (const g of page.repos) {
-          const row = toRepoRow(g);
-          await upsertRepo(row);
-          await upsertLanguages(row.github_id, g.languages.map((l) => ({ language: l.name, bytes: l.size, pct: l.pct })));
-          if (g.latestRelease?.tagName) {
-            const rel = g.latestRelease;
-            await sql`
-              insert into repo_releases (repo_id, tag_name, name, published_at, is_prerelease, html_url)
-              values (${row.github_id}, ${rel.tagName}, ${rel.name}, ${rel.publishedAt}, ${rel.isPrerelease}, ${rel.url})
-              on conflict (repo_id, tag_name) do update set
-                name = excluded.name, published_at = excluded.published_at,
-                is_prerelease = excluded.is_prerelease, html_url = excluded.html_url`;
+          const rel = g.latestRelease;
+          if (rel?.tagName) {
+            releases.push({
+              repo_id: g.databaseId,
+              tag_name: rel.tagName,
+              name: rel.name,
+              published_at: rel.publishedAt,
+              is_prerelease: rel.isPrerelease,
+              html_url: rel.url,
+            });
           }
-          reposUpserted++;
         }
+        await upsertReleases(releases);
+        reposUpserted += page.repos.length;
         cursor = page.pageInfo.endCursor;
         await setSyncState("repos_cursor", cursor ?? "");
         pagesDone++;
