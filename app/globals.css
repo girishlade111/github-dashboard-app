@@ -1,0 +1,19 @@
+@import "../styles/tokens.css";
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-body);
+  font-family: var(--font-body), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+}
+
+/* Focus-visible ring everywhere — DESIGN.md §10 */
+*:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--color-primary) 15%, transparent);
+  outline-offset: 2px;
+}
