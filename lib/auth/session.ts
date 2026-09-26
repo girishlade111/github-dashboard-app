@@ -16,23 +16,22 @@ export interface SessionUser {
   avatar: string | null;
 }
 
-interface GitHubAccount {
-  providerId?: string;
-  provider?: string;
-  accessToken?: string | null;
-  access_token?: string | null;
-}
-
 /**
- * Reads the GitHub OAuth access token from the user's Neon Auth `account`
- * record. Returns null when missing/expired (caller shows reconnect banner).
+ * Reads the GitHub OAuth access token for the current session via Neon's
+ * dedicated `get-access-token` endpoint (it also refreshes the token when
+ * needed). `listAccounts()` does NOT return the raw token, so it cannot be
+ * used here. Returns null when missing/expired (caller shows reconnect banner).
  */
 export async function getGitHubToken(): Promise<string | null> {
-  const { data: accounts } = await auth.listAccounts();
-  const list = (accounts ?? []) as GitHubAccount[];
-  const gh = list.find((a) => a.providerId === "github" || a.provider === "github");
-  const token = gh?.accessToken ?? gh?.access_token ?? null;
-  return token || null;
+  /* NOTE: Neon's server proxy declares get-access-token as GET, so providerId
+     must travel as a query param. The inherited better-auth client type
+     describes the POST body shape instead, hence the assertion below. */
+  const getAccessToken = auth.getAccessToken as unknown as (args: {
+    query: { providerId: string };
+  }) => Promise<{ data: { accessToken?: unknown } | null }>;
+  const { data } = await getAccessToken({ query: { providerId: "github" } });
+  const token = data?.accessToken;
+  return typeof token === "string" && token.length > 0 ? token : null;
 }
 
 /* Short-lived in-memory cache: token -> GitHub login (5 min). */
