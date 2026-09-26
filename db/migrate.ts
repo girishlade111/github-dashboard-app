@@ -23,11 +23,64 @@ async function main(): Promise<void> {
   }
   const sql = neon(url);
 
+/**
+ * Split SQL into statements on semicolons, ignoring semicolons inside
+ * dollar-quoted bodies (DO blocks, functions) and line comments.
+ * The naive rawSql.split(";") breaks migration 002's guarded DO block.
+ */
+function splitStatements(rawSql: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let i = 0;
+  let dollarTag: string | null = null;
+  let inLineComment = false;
+  while (i < rawSql.length) {
+    const ch = rawSql[i];
+    if (inLineComment) {
+      cur += ch;
+      if (ch === "\n") inLineComment = false;
+      i++;
+      continue;
+    }
+    if (dollarTag !== null) {
+      if (rawSql.startsWith(dollarTag, i)) {
+        cur += dollarTag;
+        i += dollarTag.length;
+        dollarTag = null;
+      } else {
+        cur += ch;
+        i++;
+      }
+      continue;
+    }
+    if (ch === "-" && rawSql[i + 1] === "-") {
+      inLineComment = true;
+      cur += "--";
+      i += 2;
+      continue;
+    }
+    const tag = rawSql.slice(i).match(/^\$[A-Za-z_0-9]*\$/);
+    if (tag) {
+      dollarTag = tag[0];
+      cur += dollarTag;
+      i += dollarTag.length;
+      continue;
+    }
+    if (ch === ";") {
+      if (cur.trim().length > 0) out.push(cur.trim());
+      cur = "";
+      i++;
+      continue;
+    }
+    cur += ch;
+    i++;
+  }
+  if (cur.trim().length > 0) out.push(cur.trim());
+  return out;
+}
+
   async function runStatements(label: string, rawSql: string): Promise<number> {
-    const statements = rawSql
-      .split(";")
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
+    const statements = splitStatements(rawSql);
     let failed = 0;
     for (const stmt of statements) {
       try {

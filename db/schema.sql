@@ -28,7 +28,8 @@ create table if not exists repo_languages (
 create table if not exists repo_releases (
   id bigserial primary key, repo_id bigint references repos(github_id) on delete cascade,
   tag_name text, name text, published_at timestamptz,
-  is_prerelease boolean default false, html_url text
+  is_prerelease boolean default false, html_url text,
+  constraint repo_releases_repo_tag_unique unique (repo_id, tag_name)
 );
 create index if not exists idx_releases_repo on repo_releases (repo_id, published_at desc);
 create table if not exists packages (

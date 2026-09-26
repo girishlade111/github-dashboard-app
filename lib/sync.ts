@@ -217,7 +217,9 @@ export async function runSyncChunk(opts: { token: string; maxPages?: number }): 
             await sql`
               insert into repo_releases (repo_id, tag_name, name, published_at, is_prerelease, html_url)
               values (${row.github_id}, ${rel.tagName}, ${rel.name}, ${rel.publishedAt}, ${rel.isPrerelease}, ${rel.url})
-              on conflict do nothing`;
+              on conflict (repo_id, tag_name) do update set
+                name = excluded.name, published_at = excluded.published_at,
+                is_prerelease = excluded.is_prerelease, html_url = excluded.html_url`;
           }
           reposUpserted++;
         }
